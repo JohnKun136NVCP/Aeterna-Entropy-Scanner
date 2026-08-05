@@ -171,21 +171,30 @@ class DES:
 
     def encrypt_file(self, path: str) -> None:
         self._require_key()
-        rc = _lib.des_encrypt_file(ctypes.byref(self._ctx), path.encode())
-        if rc != 0:
-            raise OSError(f"des_encrypt_file falló para '{path}'")
-
+        try:
+            rc = _lib.des_encrypt_file(ctypes.byref(self._ctx), path.encode())
+            if rc != 0:
+                print(f"[WARNING] Skipping '{path}': encryption failed (error code {rc}).")
+                return
+        except Exception as e:
+            print(f"[ERROR] Failed to encrypt '{path}': {e}")
+            return
     def decrypt_file(self, path: str) -> None:
         self._require_key()
-        rc = _lib.des_decrypt_file(ctypes.byref(self._ctx), path.encode())
-        if rc != 0:
-            raise OSError(f"des_decrypt_file falló para '{path}'")
+        try:
+
+            rc = _lib.des_decrypt_file(ctypes.byref(self._ctx), path.encode())
+            if rc != 0:
+                raise OSError(f"des_decrypt_file falló para '{path}'")
+        except Exception as e:
+            print(f"[ERROR] Failed to decrypt '{path}': {e}")
+            return
     def read_iv_file(self, path: str) -> bytes:
         """Extrae el IV de un archivo .enc sin descifrarlo."""
         with open(path, "rb") as f:
             iv = f.read(8)
         if len(iv) != 8:
-            raise ValueError(f"Archivo demasiado pequeño o no es .enc: '{path}'")
+            raise ValueError(f"File is too small or is not a valid encrypted file: '{path}'")
         return iv
 
     def read_iv(path: str) -> bytes:
