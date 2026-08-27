@@ -12,7 +12,9 @@ def load_config():
         "show": True,
         "savedData": str(ROOT/"data"),
         "savedPlot": str(ROOT/"data"/"plots"),
-        "onplots": False
+        "onplots": False,
+        "noPlots": False,
+        "csvName": "global"
     }
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -41,7 +43,7 @@ def str_to_bool(value):
 def main():
 
     current_config = load_config()
-   
+
     parser = argparse.ArgumentParser(description="CipherEntropy CLI")
 
     parser.add_argument("-n", help="Run with n loops", type=int,default=1, metavar="Loops")
@@ -51,6 +53,8 @@ def main():
     parser.add_argument("-sp", metavar="Directory", help="Change directory of plots",type=str, default=current_config["savedPlot"])
     parser.add_argument("-rc", metavar="True/False", help="Reset default configuration on config.json", type=bool, default=False)
     parser.add_argument("-op", help="Only plots default data", action="store_true")
+    parser.add_argument("-np", help="Skip plot generation", action="store_true")
+    parser.add_argument("-oc", metavar="Name", help="Base name for the output CSV files (e.g. 'aes' -> aes.csv / aes_keys.csv)", type=str, default=current_config["csvName"])
     parser.add_argument("-r", help="Run program", action="store_true")
     args = parser.parse_args()
     if not args.rc:
@@ -59,13 +63,16 @@ def main():
         final_prompt = args.i
         final_datap =  args.sd if args.sd else current_config["savedData"]
         final_plotp =  args.sp if args.sp else current_config["savedPlot"]
+        final_csvname = args.oc if args.oc else current_config["csvName"]
         runtime_config = {
             "loops":final_loops,
             "algo":final_algo,
             "show":final_prompt,
             "savedData":final_datap,
             "savedPlot":final_plotp,
-            "onplots":args.op
+            "onplots":args.op,
+            "noPlots":args.np,
+            "csvName":final_csvname
         }
         save_config(runtime_config)
         current_config = runtime_config
@@ -76,7 +83,9 @@ def main():
             "show": True,
             "savedData": str(ROOT/"data"),
             "savedPlot": str(ROOT/"data"/"plots"),
-            "onplots": False
+            "onplots": False,
+            "noPlots": False,
+            "csvName": "global"
         }
         save_config(defaults)
         current_config = defaults
@@ -86,5 +95,3 @@ def main():
         run(current_config)
     else:
         print("Please add -r to run program")
-
-    

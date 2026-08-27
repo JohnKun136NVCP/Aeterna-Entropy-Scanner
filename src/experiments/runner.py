@@ -1,9 +1,11 @@
 import os
 import csv
 import time
+import shutil
+import tempfile
 from src.analysis.entropy import shannonEntropy
 from src.visualization.plots import PlotGenerator
-from src.analysis.frecuency import byte_frequency,byte_frequency_normalized
+from src.analysis.frecuency import byte_frequency, byte_frequency_normalized
 from src.analysis.dataset import Dataset
 from src.crypto.des import DES
 from src.crypto.rc4 import rc4_file
@@ -13,92 +15,131 @@ from src.crypto.randomness import (
     generateTokenCiphers,
     generate_iv
 )
+
 # Run DES
 des = DES()
+
+# Extensions the pipeline could leave behind if something ever failed.
+# Ignored when listing the data folder so leftovers from previous runs
+# never get re-encrypted by accident.
+_INTERMEDIATE_EXTENSIONS = (".enc", ".rc4", ".aes", ".dec")
+
+
 def get_files(directory):
     files = [
         os.path.join(directory, f)
         for f in os.listdir(directory)
         if os.path.isfile(os.path.join(directory, f))
+        and not f.endswith(_INTERMEDIATE_EXTENSIONS)
     ]
     return sorted(files)
-def generate_key_iv(cipher:str)-> tuple:
+
+
+def generate_key_iv(cipher: str) -> tuple:
     if cipher == "DES":
-        return generateTokenCiphers(cipher),generate_iv(cipher)
+        return generateTokenCiphers(cipher), generate_iv(cipher)
     elif cipher == "RC4":
-        return generateTokenCiphers(cipher),None
+        return generateTokenCiphers(cipher), None
     else:
         return generateTokenCiphers(cipher), generate_iv(cipher)
+
+
 def to_hex(value):
     if value is None:
         return ""
     if isinstance(value, bytes):
         return value.hex()
-
     return str(value)
 
-def run_once(file_path:str,cipher:str, run_id:int):
-    run_id +=1
-    with open(file_path, "rb") as f:
-        data = f.read()
 
-    key, iv = generate_key_iv(cipher)
+def run_once(file_path: str, cipher: str, run_id: int):
+    """
+    All encrypt/decrypt work happens on a COPY of the file inside a
+    temporary directory. The original file in data/ is only ever opened
+    for reading (shutil.copy2) and is never written to, moved, or deleted.
 
-    entropy_raw = shannonEntropy(data)
-    freq_raw = byte_frequency(data)
-    sha_raw = sha256_file(file_path)
-    
-    if cipher == "DES":
-        des.randKey(key)
-        des.read_iv_file(file_path)
-        start = time.perf_counter()
-        des.encrypt_file(file_path)
-        encrypt_time = (time.perf_counter() - start) * 1000
-        with open(file_path + ".enc", "rb") as f:
-            ciphertext = f.read()
-        iv = des.read_iv_file(file_path+".enc")
-        sha_enc = sha256_file(file_path+".enc")
-        start = time.perf_counter()
-        des.decrypt_file(file_path+".enc")
-        decrypt_time = (time.perf_counter() - start) * 1000
-        
-    elif cipher == "RC4":
-        start = time.perf_counter()
-        rc4_file(file_path,file_path+".rc4",key)
-        encrypt_time = (time.perf_counter() - start) * 1000
-        with open(file_path + ".rc4", "rb") as f:
-            ciphertext = f.read()
-        sha_enc = sha256_file(file_path+".rc4")
-        os.remove(file_path)
-        start = time.perf_counter()
-        rc4_file(file_path+".rc4",file_path,key)
-        decrypt_time = (time.perf_counter() - start) * 1000
-        os.remove(file_path+".rc4")
-    elif cipher == "AES":
-        start = time.perf_counter()
-        aes_encrypt_file(file_path,file_path + ".aes",key,iv)
-        encrypt_time = (time.perf_counter() - start) * 1000
-        with open(file_path + ".aes", "rb") as f:
-            ciphertext = f.read()
-        os.remove(file_path)
-        sha_enc = sha256_file(file_path+".aes")
-        start = time.perf_counter()
-        aes_decrypt_file(file_path+".aes",file_path,key,iv)
-        decrypt_time = (time.perf_counter() - start) * 1000
-        os.remove(file_path+".aes")
+    The temp directory is destroyed as soon as the `with` block exits,
+    even if an exception is raised halfway through, so no .enc/.rc4/.aes
+    leftover can ever end up in data/ to "poison" the next run.
+    """
+    original_name = os.path.basename(file_path)
 
-    #assert recovered == data
-    freq_enc = byte_frequency_normalized(ciphertext)
-    entropy_enc = shannonEntropy(ciphertext)
-    
-   
+    with tempfile.TemporaryDirectory(prefix="cipherentropy_") as tmp_dir:
+        work_path = os.path.join(tmp_dir, original_name)
+        shutil.copy2(file_path, work_path)  # copy only, original is untouched
 
+        with open(work_path, "rb") as f:
+            data = f.read()
+
+        key, iv = generate_key_iv(cipher)
+
+        entropy_raw = shannonEntropy(data)
+        freq_raw = byte_frequency(data)
+        sha_raw = sha256_file(work_path)
+
+        suffix = {"DES": ".enc", "RC4": ".rc4", "AES": ".aes"}[cipher]
+        enc_path = work_path + suffix
+
+        if cipher == "DES":
+            des.randKey(key)
+            des.read_iv_file(work_path)
+            start = time.perf_counter()
+            des.encrypt_file(work_path)
+            encrypt_time = (time.perf_counter() - start) * 1000
+            with open(enc_path, "rb") as f:
+                ciphertext = f.read()
+            iv = des.read_iv_file(enc_path)
+            sha_enc = sha256_file(enc_path)
+            start = time.perf_counter()
+            des.decrypt_file(enc_path)
+            decrypt_time = (time.perf_counter() - start) * 1000
+
+        elif cipher == "RC4":
+            start = time.perf_counter()
+            rc4_file(work_path, enc_path, key)
+            encrypt_time = (time.perf_counter() - start) * 1000
+            with open(enc_path, "rb") as f:
+                ciphertext = f.read()
+            sha_enc = sha256_file(enc_path)
+            start = time.perf_counter()
+            rc4_file(enc_path, work_path, key)
+            decrypt_time = (time.perf_counter() - start) * 1000
+
+        elif cipher == "AES":
+            start = time.perf_counter()
+            aes_encrypt_file(work_path, enc_path, key, iv)
+            encrypt_time = (time.perf_counter() - start) * 1000
+            with open(enc_path, "rb") as f:
+                ciphertext = f.read()
+            sha_enc = sha256_file(enc_path)
+            start = time.perf_counter()
+            aes_decrypt_file(enc_path, work_path, key, iv)
+            decrypt_time = (time.perf_counter() - start) * 1000
+
+        # Integrity check: if the round-trip doesn't return the exact same
+        # bytes, it's a real bug in the cipher implementation, not a
+        # leftover-file problem. Better to fail loudly here than to
+        # discover it later through a corrupted dataset.
+        with open(work_path, "rb") as f:
+            recovered = f.read()
+        if recovered != data:
+            raise RuntimeError(
+                f"{cipher} round-trip did not match the original "
+                f"for '{original_name}'. Check the cipher implementation."
+            )
+
+        freq_enc = byte_frequency_normalized(ciphertext)
+        entropy_enc = shannonEntropy(ciphertext)
+
+    # By the time we exit the `with`, tmp_dir (copy, .enc/.rc4/.aes) has
+    # been fully removed, whether we succeeded or raised. data/ was never
+    # touched.
 
     return {
         "run_id": run_id,
         "algorithm": cipher,
 
-        "file_name": os.path.basename(file_path),
+        "file_name": original_name,
         "size_bytes": len(data),
 
         "entropy_raw": entropy_raw,
@@ -117,15 +158,17 @@ def run_once(file_path:str,cipher:str, run_id:int):
         "sha_raw": sha_raw,
         "sha_encrypted": sha_enc
     }
-def run_cipher_algorithm(conf:dict):
-    ds = Dataset()
+
+
+def run_cipher_algorithm(conf: dict):
+    ds = Dataset(csv_name=conf.get("csvName", "global"))
     ds.init_files()
     files_ = get_files(conf["savedData"])
     if conf["algo"] == "All":
-        algorithms = ["DES","RC4","AES"]
+        algorithms = ["DES", "RC4", "AES"]
     else:
-        algorithms =  [conf["algo"]]
-    experiment_id = 1
+        algorithms = [conf["algo"]]
+    experiment_id = ds.next_experiment_id()
     for algorithm in algorithms:
         for loop_id in range(conf["loops"]):
             for file_path in files_:
@@ -135,7 +178,7 @@ def run_cipher_algorithm(conf:dict):
                     run_id=experiment_id)
                 ds.append_experiment([
                     experiment_id,
-                    loop_id+1,
+                    loop_id + 1,
                     result["run_id"],
                     result["algorithm"],
                     result["file_name"],
@@ -153,15 +196,18 @@ def run_cipher_algorithm(conf:dict):
                     result["algorithm"],
                     result["key"].hex(),
                     "" if result["iv"] is None else result["iv"].hex()
-               ])
-                experiment_id +=1
+                ])
+                experiment_id += 1
+
 
 def run(conf):
     if not conf["onplots"]:
         run_cipher_algorithm(conf)
-    
-    plots = PlotGenerator(
-        csv_file="data/csv/global.csv",
-        output_dir=conf["savedPlot"]
-    )
-    plots.generate_all()  
+
+    if not conf.get("noPlots", False):
+        csv_name = conf.get("csvName", "global")
+        plots = PlotGenerator(
+            csv_file=f"data/csv/{csv_name}.csv",
+            output_dir=conf["savedPlot"]
+        )
+        plots.generate_all()
