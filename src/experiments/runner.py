@@ -3,6 +3,7 @@ import csv
 import time
 import shutil
 import tempfile
+import concurrent.futures
 from src.analysis.entropy import shannonEntropy
 from src.visualization.plots import PlotGenerator
 from src.analysis.frecuency import byte_frequency, byte_frequency_normalized
@@ -81,17 +82,21 @@ def run_once(file_path: str, cipher: str, run_id: int):
         enc_path = work_path + suffix
 
         if cipher == "DES":
-            des.randKey(key)
-            des.read_iv_file(work_path)
+            # A fresh instance per call: DES() holds mutable key/subkey
+            # state, so sharing the module-level `des` object across
+            # threads would let concurrent runs clobber each other's key.
+            local_des = DES()
+            local_des.randKey(key)
+            local_des.read_iv_file(work_path)
             start = time.perf_counter()
-            des.encrypt_file(work_path)
+            local_des.encrypt_file(work_path)
             encrypt_time = (time.perf_counter() - start) * 1000
             with open(enc_path, "rb") as f:
                 ciphertext = f.read()
-            iv = des.read_iv_file(enc_path)
+            iv = local_des.read_iv_file(enc_path)
             sha_enc = sha256_file(enc_path)
             start = time.perf_counter()
-            des.decrypt_file(enc_path)
+            local_des.decrypt_file(enc_path)
             decrypt_time = (time.perf_counter() - start) * 1000
 
         elif cipher == "RC4":
@@ -168,18 +173,28 @@ def run_cipher_algorithm(conf: dict):
         algorithms = ["DES", "RC4", "AES"]
     else:
         algorithms = [conf["algo"]]
+
+    max_workers = conf.get("workers") or os.cpu_count() or 1
     experiment_id = ds.next_experiment_id()
+
     for algorithm in algorithms:
         for loop_id in range(conf["loops"]):
-            for file_path in files_:
-                result = run_once(
-                    file_path=file_path,
-                    cipher=algorithm,
-                    run_id=experiment_id)
+            # Actual parallelism: ctypes releases the GIL while inside the
+            # C calls (des_encrypt_file/decrypt_file), so these threads can
+            # genuinely run on different cores at the same time. CSV writes
+            # happen afterwards, sequentially, in the main thread only.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = [
+                    pool.submit(run_once, file_path=fp, cipher=algorithm, run_id=0)
+                    for fp in files_
+                ]
+                results = [f.result() for f in futures]
+
+            for result in results:
                 ds.append_experiment([
                     experiment_id,
                     loop_id + 1,
-                    result["run_id"],
+                    experiment_id,
                     result["algorithm"],
                     result["file_name"],
                     result["size_bytes"],
@@ -192,7 +207,7 @@ def run_cipher_algorithm(conf: dict):
                     result["sha_encrypted"]
                 ])
                 ds.append_key([
-                    result["run_id"],
+                    experiment_id,
                     result["algorithm"],
                     result["key"].hex(),
                     "" if result["iv"] is None else result["iv"].hex()
@@ -206,8 +221,12 @@ def run(conf):
 
     if not conf.get("noPlots", False):
         csv_name = conf.get("csvName", "global")
+        csv_source = (
+            "data/csv/*.csv" if conf.get("combinePlots", False)
+            else f"data/csv/{csv_name}.csv"
+        )
         plots = PlotGenerator(
-            csv_file=f"data/csv/{csv_name}.csv",
+            csv_file=csv_source,
             output_dir=conf["savedPlot"]
         )
         plots.generate_all()

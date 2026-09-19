@@ -14,7 +14,8 @@ def load_config():
         "savedPlot": str(ROOT/"data"/"plots"),
         "onplots": False,
         "noPlots": False,
-        "csvName": "global"
+        "csvName": "global",
+        "combinePlots": False
     }
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -55,6 +56,7 @@ def main():
     parser.add_argument("-op", help="Only plots default data", action="store_true")
     parser.add_argument("-np", help="Skip plot generation", action="store_true")
     parser.add_argument("-oc", metavar="Name", help="Base name for the output CSV files (e.g. 'aes' -> aes.csv / aes_keys.csv)", type=str, default=current_config["csvName"])
+    parser.add_argument("-cp", help="Combine every data/csv/*.csv file for cross-algorithm plots instead of just this job's own CSV", action="store_true")
     parser.add_argument("-r", help="Run program", action="store_true")
     args = parser.parse_args()
     if not args.rc:
@@ -72,7 +74,8 @@ def main():
             "savedPlot":final_plotp,
             "onplots":args.op,
             "noPlots":args.np,
-            "csvName":final_csvname
+            "csvName":final_csvname,
+            "combinePlots":args.cp
         }
         save_config(runtime_config)
         current_config = runtime_config
@@ -85,7 +88,8 @@ def main():
             "savedPlot": str(ROOT/"data"/"plots"),
             "onplots": False,
             "noPlots": False,
-            "csvName": "global"
+            "csvName": "global",
+            "combinePlots": False
         }
         save_config(defaults)
         current_config = defaults
