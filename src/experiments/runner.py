@@ -4,6 +4,7 @@ import time
 import shutil
 import tempfile
 import concurrent.futures
+from config import ROOT
 from src.analysis.entropy import shannonEntropy
 from src.visualization.plots import PlotGenerator
 from src.analysis.frecuency import byte_frequency, byte_frequency_normalized
@@ -221,9 +222,10 @@ def run(conf):
 
     if not conf.get("noPlots", False):
         csv_name = conf.get("csvName", "global")
+        csv_dir = ROOT / "data" / "csv"
         csv_source = (
-            "data/csv/*.csv" if conf.get("combinePlots", False)
-            else f"data/csv/{csv_name}.csv"
+            str(csv_dir / "*.csv") if conf.get("combinePlots", False)
+            else str(csv_dir / f"{csv_name}.csv")
         )
         plots = PlotGenerator(
             csv_file=csv_source,
