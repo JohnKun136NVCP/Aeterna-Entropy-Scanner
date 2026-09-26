@@ -1,6 +1,6 @@
-# CipherEntropy
+# Aeterna-Entropy Scanner
 
-[![CipherEntropy Logo](https://github.com/JohnKun136NVCP/CipherEntropy/raw/main/img/frieren_ascii.png)](/JohnKun136NVCP/CipherEntropy/blob/main/img/frieren_ascii.png)
+[![Aeterna-Entropy Scanner Logo](https://github.com/JohnKun136NVCP/Aeterna-Entropy-Scanner/raw/main/img/frieren_ascii.png)](/JohnKun136NVCP/Aeterna-Entropy-Scanner/blob/main/img/frieren_ascii.png)
 
 Created by [JohnKun136NVCP](https://github.com/JohnKun136NVCP)
 
@@ -8,7 +8,7 @@ Project to get my bachelor's degree in physics and computer science, and to lear
 
 ## Project Overview
 
-CipherEntropy is a cryptographic research tool that measures and statistically characterizes the randomness of encrypted data. It runs a configurable batch of files through **AES-CBC**, **DES-CBC**, and **RC4**, and for every run records both the classic byte-level Shannon entropy of the ciphertext and a set of deeper, complementary analyses: exact bit-level entropy (computed with `numpy.unpackbits`, not estimated from byte frequencies), the encryption/decryption keys and IVs themselves, and cryptographic hashes of both the plaintext and ciphertext.
+Aeterna-Entropy Scanner is a cryptographic research tool that measures and statistically characterizes the randomness of encrypted data. It runs a configurable batch of files through **AES-CBC**, **DES-CBC**, and **RC4**, and for every run records both the classic byte-level Shannon entropy of the ciphertext and a set of deeper, complementary analyses: exact bit-level entropy (computed with `numpy.unpackbits`, not estimated from byte frequencies), the encryption/decryption keys and IVs themselves, and cryptographic hashes of both the plaintext and ciphertext.
 
 Beyond the raw entropy number, the project treats the problem as one of information theory and statistics rather than a single pass/fail metric:
 
@@ -92,7 +92,7 @@ python3 main.py -rc True
 ## Project Structure
 
 ```
-CipherEntropy/
+Aeterna-Entropy Scanner/
 ├── main.py                      # Entry point -> calls cli.main()
 ├── cli.py                       # Argument parsing, config.json persistence
 ├── config.py                    # ROOT path and shared constants
