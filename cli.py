@@ -15,7 +15,8 @@ def load_config():
         "onplots": False,
         "noPlots": False,
         "csvName": "global",
-        "combinePlots": False
+        "combinePlots": False,
+        "keyAnalysis": False
     }
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -57,6 +58,7 @@ def main():
     parser.add_argument("-np", help="Skip plot generation", action="store_true")
     parser.add_argument("-oc", metavar="Name", help="Base name for the output CSV files (e.g. 'aes' -> aes.csv / aes_keys.csv)", type=str, default=current_config["csvName"])
     parser.add_argument("-cp", help="Combine every data/csv/*.csv file for cross-algorithm plots instead of just this job's own CSV", action="store_true")
+    parser.add_argument("-ka", help="Also run key/IV and hash statistical analysis (KeyStatistics)", action="store_true")
     parser.add_argument("-r", help="Run program", action="store_true")
     args = parser.parse_args()
     if not args.rc:
@@ -75,7 +77,8 @@ def main():
             "onplots":args.op,
             "noPlots":args.np,
             "csvName":final_csvname,
-            "combinePlots":args.cp
+            "combinePlots":args.cp,
+            "keyAnalysis":args.ka
         }
         save_config(runtime_config)
         current_config = runtime_config
@@ -89,7 +92,8 @@ def main():
             "onplots": False,
             "noPlots": False,
             "csvName": "global",
-            "combinePlots": False
+            "combinePlots": False,
+            "keyAnalysis": False
         }
         save_config(defaults)
         current_config = defaults

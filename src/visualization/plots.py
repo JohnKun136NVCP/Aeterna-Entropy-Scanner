@@ -8,6 +8,7 @@ from statannotations.Annotator import Annotator
 from scipy.stats import wilcoxon
 from scipy.stats import mannwhitneyu
 from scipy.stats import kruskal
+from scipy.stats import chisquare
 from scipy.optimize import brentq
 from itertools import combinations
 
@@ -1250,6 +1251,116 @@ class PlotGenerator:
         plt.savefig(self.output_dir / "binary_entropy_curve_real_bits.png", dpi=350)
         plt.close()
 
+    # ═════════════════════════════════════════════════════════════════════
+    # NEW: hash statistics (sha256_raw / sha256_encrypted)
+    # ═════════════════════════════════════════════════════════════════════
+
+    def hash_collision_check(self):
+        """
+        Flags any duplicate sha256_encrypted value across DIFFERENT
+        experiment_id rows. For a correct SHA-256 over genuinely distinct
+        ciphertexts this is astronomically unlikely (birthday bound), so
+        a real duplicate here is a strong signal of an actual bug --
+        e.g. two runs somehow producing byte-identical ciphertext, or a
+        hashing/storage bug in the pipeline -- not a property of SHA-256
+        itself, which needs no further statistical justification.
+        """
+        dupes = self.pdf[self.pdf.duplicated(subset=["sha256_encrypted"], keep=False)]
+        with open(self.output_dir / "hash_collision_report.txt", "w") as f:
+            f.write("SHA-256 ciphertext-hash collision check\n")
+            f.write("=" * 45 + "\n\n")
+            if dupes.empty:
+                f.write(f"No sha256_encrypted collisions found across {len(self.pdf)} rows.\n")
+            else:
+                f.write(f"WARNING: {len(dupes)} rows share a duplicate "
+                        f"sha256_encrypted value.\n\n")
+                f.write(dupes[["experiment_id", "algorithm", "file_name",
+                              "sha256_encrypted"]].to_string(index=False))
+        return dupes
+
+    def hash_byte_uniformity(self):
+        """
+        Chi-square goodness-of-fit test on the pooled bytes of
+        sha256_raw and sha256_encrypted, by algorithm, against H0:
+        'every byte value (0-255) is equally likely'. This is less a
+        test of the ciphers than a sanity check on the measurement
+        pipeline itself: SHA-256 output is designed to be statistically
+        indistinguishable from uniform noise, so a failure here would
+        point at a bug in hashing, hex-encoding, or storage -- not at
+        SHA-256, which is already extensively studied elsewhere.
+        """
+        results = []
+        for alg, group in self.pdf.groupby("algorithm"):
+            for col, label in [("sha256_raw", "raw"), ("sha256_encrypted", "encrypted")]:
+                hex_strings = group[col].dropna().astype(str)
+                hex_strings = hex_strings[hex_strings.str.len() == 64]
+                if hex_strings.empty:
+                    continue
+                all_bytes = b"".join(bytes.fromhex(h) for h in hex_strings)
+                counts = np.bincount(np.frombuffer(all_bytes, dtype=np.uint8), minlength=256)
+                expected = np.full(256, counts.sum() / 256)
+                stat, p = chisquare(counts, expected)
+                results.append({
+                    "algorithm": alg, "hash_type": label,
+                    "total_hash_bytes": int(counts.sum()),
+                    "chi2_stat": stat, "p_value": p
+                })
+        results_df = pd.DataFrame(results)
+        results_df.to_csv(self.output_dir / "hash_chi_square_uniformity.csv", index=False)
+        return results_df
+
+    def hash_avalanche_effect(self, sample_files=6, max_pairs_per_file=2000):
+        """
+        For the busiest repeated files, samples pairs of
+        sha256_encrypted values across different loops (same file,
+        different key/IV each run) and computes the fraction of
+        DIFFERING BITS between each pair's hash. An ideal cipher's
+        avalanche effect means ~50% of ciphertext (and therefore hash)
+        bits should differ between any two independent runs, even on
+        the exact same input file. Plots that fraction's distribution
+        against the 50% ideal.
+        """
+        top_files = self.pdf["file_name"].value_counts().head(sample_files).index.tolist()
+        rng = np.random.default_rng(42)
+        fractions = []
+
+        for fname in top_files:
+            hashes = self.pdf.loc[self.pdf["file_name"] == fname, "sha256_encrypted"].dropna()
+            hashes = [h for h in hashes if len(h) == 64]
+            n = len(hashes)
+            if n < 2:
+                continue
+            n_pairs = min(max_pairs_per_file, n * (n - 1) // 2)
+            idx = rng.integers(0, n, size=(n_pairs, 2))
+            for i, j in idx:
+                if i == j:
+                    continue
+                b1 = bytes.fromhex(hashes[i])
+                b2 = bytes.fromhex(hashes[j])
+                xor = int.from_bytes(b1, "big") ^ int.from_bytes(b2, "big")
+                diff_bits = bin(xor).count("1")
+                fractions.append(diff_bits / (len(b1) * 8))
+
+        if not fractions:
+            print("[plots] Skipping hash_avalanche_effect: not enough repeated-file data.")
+            return
+
+        plt.figure(figsize=(9, 6))
+        sns.histplot(fractions, bins=40, kde=True, color="#2c7bb6")
+        plt.axvline(0.5, color="black", linestyle="--", linewidth=1.5,
+                    label="Ideal avalanche (50% of bits differ)")
+        mean_frac = float(np.mean(fractions))
+        plt.axvline(mean_frac, color="#d7191c", linestyle=":", linewidth=1.5,
+                    label=f"Observed mean = {mean_frac:.4f}")
+        plt.xlabel("Fraction of differing bits between two ciphertext hashes\n"
+                  "(same file, different key/IV each run)")
+        plt.ylabel("Count")
+        plt.title("Avalanche Effect: Hash Bit-Difference Distribution")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(self.output_dir / "hash_avalanche_effect.png", dpi=350)
+        plt.close()
+
     def generate_all(self):
         self.entropy_histogram()
         self.entropy_boxplot()
@@ -1293,6 +1404,11 @@ class PlotGenerator:
         # Statistical physics
         self.entropy_order_parameter()
         self.maxent_uniform_demo()
+
+        # Hash statistics (sha256_raw / sha256_encrypted)
+        self.hash_collision_check()
+        self.hash_byte_uniformity()
+        self.hash_avalanche_effect()
 
         # statistics
         self.descriptive_statistics()

@@ -6,7 +6,9 @@ import tempfile
 import concurrent.futures
 from config import ROOT
 from src.analysis.entropy import shannonEntropy
+from src.analysis.bit_entropy import compute_bit_level_entropy
 from src.visualization.plots import PlotGenerator
+from src.analysis.key_statistics import KeyStatistics
 from src.analysis.frecuency import byte_frequency, byte_frequency_normalized
 from src.analysis.dataset import Dataset
 from src.crypto.des import DES
@@ -137,6 +139,11 @@ def run_once(file_path: str, cipher: str, run_id: int):
         freq_enc = byte_frequency_normalized(ciphertext)
         entropy_enc = shannonEntropy(ciphertext)
 
+        # Bit-level (not byte-level) measurement: must happen here, while
+        # enc_path still exists inside tmp_dir -- it's gone the moment we
+        # leave this `with` block.
+        bernoulli_p, bit_entropy_val = compute_bit_level_entropy(enc_path)
+
     # By the time we exit the `with`, tmp_dir (copy, .enc/.rc4/.aes) has
     # been fully removed, whether we succeeded or raised. data/ was never
     # touched.
@@ -151,6 +158,9 @@ def run_once(file_path: str, cipher: str, run_id: int):
         "entropy_raw": entropy_raw,
         "entropy_encrypted": entropy_enc,
         "entropy_delta": entropy_enc - entropy_raw,
+
+        "bernoulli_p": bernoulli_p,
+        "bit_entropy": bit_entropy_val,
 
         "encrypt_time_ms": encrypt_time,
         "decrypt_time_ms": decrypt_time,
@@ -205,7 +215,9 @@ def run_cipher_algorithm(conf: dict):
                     result["encrypt_time_ms"],
                     result["decrypt_time_ms"],
                     result["sha_raw"],
-                    result["sha_encrypted"]
+                    result["sha_encrypted"],
+                    result["bernoulli_p"],
+                    result["bit_entropy"]
                 ])
                 ds.append_key([
                     experiment_id,
@@ -220,9 +232,10 @@ def run(conf):
     if not conf["onplots"]:
         run_cipher_algorithm(conf)
 
+    csv_name = conf.get("csvName", "global")
+    csv_dir = ROOT / "data" / "csv"
+
     if not conf.get("noPlots", False):
-        csv_name = conf.get("csvName", "global")
-        csv_dir = ROOT / "data" / "csv"
         csv_source = (
             str(csv_dir / "*.csv") if conf.get("combinePlots", False)
             else str(csv_dir / f"{csv_name}.csv")
@@ -232,3 +245,17 @@ def run(conf):
             output_dir=conf["savedPlot"]
         )
         plots.generate_all()
+
+    if conf.get("keyAnalysis", False):
+        # Note the different glob: KeyStatistics wants the *_keys.csv
+        # files specifically (PlotGenerator's glob explicitly EXCLUDES
+        # them, since those hold cryptographic material, not metrics).
+        keys_source = (
+            str(csv_dir / "*_keys.csv") if conf.get("combinePlots", False)
+            else str(csv_dir / f"{csv_name}_keys.csv")
+        )
+        key_stats = KeyStatistics(
+            csv_file=keys_source,
+            output_dir=conf["savedPlot"]
+        )
+        key_stats.generate_all()
